@@ -1,17 +1,24 @@
 import { useEffect, useRef, useState } from "react";
 import Gallery from "./pages/Gallery.jsx";
 import Settings from "./pages/Settings.jsx";
-import PasswordPrompt from "./components/PasswordPrompt.jsx";
 import { ADMIN_WORD, TRIGGER_SEQUENCE } from "./config.js";
 import { findVaultByPassword } from "./vaults.js";
 
 export default function App() {
   const [view, setView] = useState("welcome");
   const [activeVault, setActiveVault] = useState(null);
-  const [showPrompt, setShowPrompt] = useState(false);
+  const [promptVisible, setPromptVisible] = useState(false);
+  const [value, setValue] = useState("");
 
-  const triggerBufferRef = useRef("");
-  const directBufferRef = useRef("");
+  const inputRef = useRef(null);
+
+  // Keep the invisible/visible input focused whenever we're on the
+  // Welcome screen - this is what makes mobile keyboards appear at all.
+  useEffect(() => {
+    if (view === "welcome") {
+      inputRef.current?.focus();
+    }
+  }, [view, promptVisible]);
 
   async function tryUnlock(typed) {
     if (typed === ADMIN_WORD) {
@@ -27,49 +34,44 @@ export default function App() {
     return false;
   }
 
-  // Runs on the blank Welcome screen at all times - handles BOTH
-  // the trigger sequence (for the popup) and blind direct typing + Enter.
-  useEffect(() => {
-    if (view !== "welcome" || showPrompt) return;
+  function handleChange(e) {
+    const newValue = e.target.value;
+    setValue(newValue);
 
-    function handleKeyDown(e) {
-      if (e.key === "Enter") {
-        const typed = directBufferRef.current;
-        directBufferRef.current = "";
-        if (typed) tryUnlock(typed);
-        return;
-      }
-
-      if (e.key.length !== 1) return;
-
-      // Track the direct-typing buffer (uncapped-ish, generous window)
-      directBufferRef.current = (directBufferRef.current + e.key).slice(-64);
-
-      // Track the trigger-sequence buffer separately, in parallel
-      triggerBufferRef.current = (
-        triggerBufferRef.current + e.key
-      ).slice(-TRIGGER_SEQUENCE.length);
-
-      if (triggerBufferRef.current === TRIGGER_SEQUENCE) {
-        triggerBufferRef.current = "";
-        directBufferRef.current = "";
-        e.preventDefault();
-        setShowPrompt(true);
-      }
+    // Watch for the trigger sequence while typing blind (box not shown yet)
+    if (!promptVisible && newValue.endsWith(TRIGGER_SEQUENCE)) {
+      setPromptVisible(true);
+      setValue("");
     }
+  }
 
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [view, showPrompt]);
+  async function handleKeyDown(e) {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
 
-  async function handleSubmitPassword(typed) {
+    const typed = value.trim();
+    setValue("");
+    if (!typed) return;
+
     const success = await tryUnlock(typed);
-    if (success) setShowPrompt(false);
-    return success;
+    if (!success) {
+      // wrong word: silently clear, stay focused, no error shown
+      inputRef.current?.focus();
+    }
+  }
+
+  function handleBlur() {
+    // Keep the invisible catcher focused on the blank Welcome screen so
+    // typing/tapping keeps working even if focus slips for a moment.
+    if (view === "welcome") {
+      setTimeout(() => inputRef.current?.focus(), 0);
+    }
   }
 
   function goToWelcome() {
     setActiveVault(null);
+    setPromptVisible(false);
+    setValue("");
     setView("welcome");
   }
 
@@ -78,10 +80,34 @@ export default function App() {
       <div className="aurora-bg" />
       <div className="relative z-10 h-full">
         {view === "welcome" && (
-          <div className="h-full flex items-center justify-center">
+          <div
+            className="h-full flex items-center justify-center"
+            onClick={() => inputRef.current?.focus()}
+          >
             <h1 className="text-5xl font-light tracking-tight text-gray-500 select-none">
               Welcome<span className="cursor-blink text-indigo-400">_</span>
             </h1>
+
+            <input
+              ref={inputRef}
+              type="text"
+              inputMode="text"
+              enterKeyHint="done"
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck="false"
+              value={value}
+              onChange={handleChange}
+              onKeyDown={handleKeyDown}
+              onBlur={handleBlur}
+              className={
+                promptVisible
+                  ? "fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-72 text-center px-5 py-3 rounded-xl bg-white/[0.06] border border-white/15 text-white text-lg tracking-wide outline-none focus:ring-2 focus:ring-indigo-400 backdrop-blur-xl z-20 scale-in"
+                  : "fixed inset-0 opacity-0 z-20"
+              }
+              style={{ fontSize: "16px" }} // prevents iOS Safari auto-zoom on focus
+            />
           </div>
         )}
 
@@ -101,13 +127,6 @@ export default function App() {
           </div>
         )}
       </div>
-
-      {showPrompt && (
-        <PasswordPrompt
-          onSubmit={handleSubmitPassword}
-          onCancel={() => setShowPrompt(false)}
-        />
-      )}
     </div>
   );
 }
