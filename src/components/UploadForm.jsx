@@ -1,17 +1,18 @@
 import { useRef, useState } from "react";
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { db } from "../firebase";
+import { stripExifFromImage } from "../utils/stripExif.js";
 
 const CLOUD_NAME = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
 const UPLOAD_PRESET = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
 
-async function uploadToCloudinary(file) {
+async function uploadToCloudinary(file, resourceType) {
   const formData = new FormData();
   formData.append("file", file);
   formData.append("upload_preset", UPLOAD_PRESET);
 
   const response = await fetch(
-    `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`,
+    `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/${resourceType}/upload`,
     { method: "POST", body: formData }
   );
 
@@ -25,21 +26,37 @@ export default function UploadForm({ vaultId, folderId, onUploaded }) {
   const [dragOver, setDragOver] = useState(false);
 
   async function uploadFiles(fileList) {
-    const files = Array.from(fileList).filter((f) =>
-      f.type.startsWith("image/")
+    const files = Array.from(fileList).filter(
+      (f) => f.type.startsWith("image/") || f.type.startsWith("video/")
     );
     if (files.length === 0) return;
 
     setUploading(true);
     try {
       for (const file of files) {
-        const result = await uploadToCloudinary(file);
+        const isVideo = file.type.startsWith("video/");
+        let fileToUpload = file;
+
+        if (!isVideo) {
+          try {
+            fileToUpload = await stripExifFromImage(file);
+          } catch {
+            fileToUpload = file; // fall back rather than block the upload
+          }
+        }
+
+        const result = await uploadToCloudinary(
+          fileToUpload,
+          isVideo ? "video" : "image"
+        );
+
         const docRef = await addDoc(collection(db, "photos"), {
           vaultId,
           folderId: folderId || null,
           name: file.name,
           url: result.secure_url,
           publicId: result.public_id,
+          type: isVideo ? "video" : "image",
           createdAt: serverTimestamp()
         });
         onUploaded?.(docRef.id);
@@ -69,7 +86,7 @@ export default function UploadForm({ vaultId, folderId, onUploaded }) {
       }`}
     >
       <p className="text-gray-500 text-sm mb-3">
-        Drag & drop photos here, or
+        Drag & drop photos or videos here, or
       </p>
       <button
         onClick={() => inputRef.current?.click()}
@@ -81,7 +98,7 @@ export default function UploadForm({ vaultId, folderId, onUploaded }) {
       <input
         ref={inputRef}
         type="file"
-        accept="image/*"
+        accept="image/*,video/*"
         multiple
         hidden
         onChange={(e) => uploadFiles(e.target.files)}

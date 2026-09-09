@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { listenToVaults, createVault, deleteVault } from "../vaults.js";
 import { ADMIN_WORD } from "../config.js";
 
-export default function Settings({ onBack }) {
+export default function Settings({ onBack, voiceLockEnabled, onToggleVoiceLock, voiceSupported }) {
   const [vaults, setVaults] = useState([]);
   const [label, setLabel] = useState("");
   const [password, setPassword] = useState("");
@@ -55,6 +55,36 @@ export default function Settings({ onBack }) {
           Back
         </button>
       </header>
+
+      <div className="backdrop-blur-xl bg-white/[0.03] border border-white/10 rounded-2xl p-6 mb-8">
+        <h2 className="text-white text-sm font-medium mb-1">Voice panic lock</h2>
+        <p className="text-gray-500 text-xs mb-4">
+          When enabled, your microphone listens continuously (while this tab
+          is open) for a spoken trigger phrase and instantly locks back to
+          the Welcome screen from anywhere in the app.
+        </p>
+
+        {!voiceSupported && (
+          <p className="text-yellow-400 text-xs mb-3">
+            Your browser doesn't support voice recognition (this generally
+            only works in Chrome/Edge). Double-tapping Escape still works as
+            a fallback panic gesture.
+          </p>
+        )}
+
+        <label className="flex items-center gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={voiceLockEnabled}
+            onChange={(e) => onToggleVoiceLock(e.target.checked)}
+            disabled={!voiceSupported}
+            className="w-4 h-4 accent-indigo-500"
+          />
+          <span className="text-sm text-gray-200">
+            Enable voice panic lock
+          </span>
+        </label>
+      </div>
 
       <form
         onSubmit={handleCreate}

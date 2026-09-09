@@ -1,14 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
+const SLIDESHOW_INTERVAL_MS = 4000;
+
 export default function PhotoModal({ photos, index, onClose, onDelete, onNavigate, onRename }) {
   const containerRef = useRef(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [zoomed, setZoomed] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
+  const [slideshowOn, setSlideshowOn] = useState(false);
 
   const photo = photos[index];
+  const isVideo = photo?.type === "video";
 
   useEffect(() => {
     setZoomed(false);
@@ -16,10 +20,24 @@ export default function PhotoModal({ photos, index, onClose, onDelete, onNavigat
   }, [index]);
 
   useEffect(() => {
+    if (!slideshowOn) return;
+
+    const timer = setTimeout(() => {
+      if (index < photos.length - 1) {
+        onNavigate(index + 1);
+      } else {
+        setSlideshowOn(false);
+      }
+    }, SLIDESHOW_INTERVAL_MS);
+
+    return () => clearTimeout(timer);
+  }, [slideshowOn, index, photos.length, onNavigate]);
+
+  useEffect(() => {
     if (!photo) return;
 
     function handleKeyDown(e) {
-      if (editingName) return; // let typing in the rename box work normally
+      if (editingName) return;
 
       if (e.key === "Escape") {
         if (document.fullscreenElement) {
@@ -33,6 +51,9 @@ export default function PhotoModal({ photos, index, onClose, onDelete, onNavigat
         goPrev();
       } else if (e.key.toLowerCase() === "f") {
         toggleFullscreen();
+      } else if (e.key === " ") {
+        e.preventDefault();
+        setSlideshowOn((s) => !s);
       }
     }
 
@@ -72,7 +93,7 @@ export default function PhotoModal({ photos, index, onClose, onDelete, onNavigat
     const blobUrl = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = blobUrl;
-    link.download = photo.name || "photo.jpg";
+    link.download = photo.name || (isVideo ? "video.mp4" : "photo.jpg");
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -110,6 +131,13 @@ export default function PhotoModal({ photos, index, onClose, onDelete, onNavigat
           {index + 1} / {photos.length}
         </span>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => setSlideshowOn((s) => !s)}
+            className="w-9 h-9 flex items-center justify-center rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-white text-sm transition"
+            title={slideshowOn ? "Pause slideshow (space)" : "Play slideshow (space)"}
+          >
+            {slideshowOn ? "⏸" : "▶"}
+          </button>
           <button
             onClick={toggleFullscreen}
             className="w-9 h-9 flex items-center justify-center rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-white text-sm transition"
@@ -157,16 +185,24 @@ export default function PhotoModal({ photos, index, onClose, onDelete, onNavigat
         className="scale-in max-w-full max-h-full flex flex-col items-center px-4"
         onClick={(e) => e.stopPropagation()}
       >
-        <img
-          src={photo.url}
-          alt={photo.name}
-          onClick={() => setZoomed(!zoomed)}
-          className={`rounded-2xl shadow-[0_0_60px_rgba(99,102,241,0.15)] transition-transform duration-300 cursor-zoom-in ${
-            zoomed
-              ? "max-w-none max-h-none scale-150 cursor-zoom-out"
-              : "max-h-[75vh] max-w-full object-contain"
-          }`}
-        />
+        {isVideo ? (
+          <video
+            src={photo.url}
+            controls
+            className="rounded-2xl shadow-[0_0_60px_rgba(99,102,241,0.15)] max-h-[75vh] max-w-full"
+          />
+        ) : (
+          <img
+            src={photo.url}
+            alt={photo.name}
+            onClick={() => setZoomed(!zoomed)}
+            className={`rounded-2xl shadow-[0_0_60px_rgba(99,102,241,0.15)] transition-transform duration-300 cursor-zoom-in ${
+              zoomed
+                ? "max-w-none max-h-none scale-150 cursor-zoom-out"
+                : "max-h-[75vh] max-w-full object-contain"
+            }`}
+          />
+        )}
 
         <div className="flex items-center gap-2 mt-4">
           {editingName ? (
@@ -185,7 +221,7 @@ export default function PhotoModal({ photos, index, onClose, onDelete, onNavigat
               <button
                 onClick={startRename}
                 className="text-gray-500 hover:text-indigo-300 text-xs"
-                title="Rename photo"
+                title="Rename"
               >
                 ✎
               </button>

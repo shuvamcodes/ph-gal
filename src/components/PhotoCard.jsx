@@ -1,3 +1,7 @@
+function getVideoThumbnail(url) {
+  return url.replace(/\.[^./]+$/, ".jpg");
+}
+
 export default function PhotoCard({ photo, onOpen, selectMode, isSelected, onToggleSelect }) {
   function handleClick() {
     if (selectMode) {
@@ -6,6 +10,8 @@ export default function PhotoCard({ photo, onOpen, selectMode, isSelected, onTog
       onOpen(photo);
     }
   }
+
+  const isVideo = photo.type === "video";
 
   return (
     <div
@@ -17,12 +23,20 @@ export default function PhotoCard({ photo, onOpen, selectMode, isSelected, onTog
       }`}
     >
       <img
-        src={photo.url}
+        src={isVideo ? getVideoThumbnail(photo.url) : photo.url}
         alt={photo.name}
         loading="lazy"
         className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
       />
       <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition" />
+
+      {isVideo && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div className="w-10 h-10 rounded-full bg-black/50 flex items-center justify-center">
+            <span className="text-white text-sm ml-0.5">▶</span>
+          </div>
+        </div>
+      )}
 
       {selectMode && (
         <div
