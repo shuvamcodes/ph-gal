@@ -1,39 +1,46 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import Gallery from "./pages/Gallery.jsx";
 import Settings from "./pages/Settings.jsx";
-import { ADMIN_WORD, TRIGGER_SEQUENCE, VOICE_LOCK_PHRASE, INACTIVITY_LOCK_MS } from "./config.js";
-import { findVaultByPassword } from "./vaults.js";
+import BurnView from "./components/BurnView.jsx";
+import KnockOrbs from "./components/KnockOrbs.jsx";
+import { ADMIN_WORD, TRIGGER_SEQUENCE, INACTIVITY_LOCK_MS, KNOCK_TARGET_WORD } from "./config.js";
+import { findUnlockTarget } from "./vaults.js";
 import { useInactivityLock } from "./hooks/useInactivityLock.js";
-import { useVoiceLock } from "./hooks/useVoiceLock.js";
+import { vaultSignatureColors } from "./utils/vaultSignature.js";
 
 export default function App() {
+  const burnId = new URLSearchParams(window.location.search).get("burn");
+
   const [view, setView] = useState("welcome");
   const [activeVault, setActiveVault] = useState(null);
   const [promptVisible, setPromptVisible] = useState(false);
   const [value, setValue] = useState("");
-  const [voiceLockEnabled, setVoiceLockEnabled] = useState(
-    () => localStorage.getItem("voiceLockEnabled") === "true"
-  );
 
   const inputRef = useRef(null);
 
   useEffect(() => {
-    if (view === "welcome") {
+    if (view === "welcome" && !burnId) {
       inputRef.current?.focus();
     }
-  }, [view, promptVisible]);
+  }, [view, promptVisible, burnId]);
 
   async function tryUnlock(typed) {
     if (typed === ADMIN_WORD) {
       setView("settings");
       return true;
     }
-    const vault = await findVaultByPassword(typed);
-    if (vault) {
-      setActiveVault(vault);
+
+    const result = await findUnlockTarget(typed);
+    if (result) {
+      const { vault, decoy } = result;
+      setActiveVault({
+        id: decoy ? `${vault.id}__decoy` : vault.id,
+        label: vault.label
+      });
       setView("gallery");
       return true;
     }
+
     return false;
   }
 
@@ -62,7 +69,7 @@ export default function App() {
   }
 
   function handleBlur() {
-    if (view === "welcome") {
+    if (view === "welcome" && !burnId) {
       setTimeout(() => inputRef.current?.focus(), 0);
     }
   }
@@ -74,18 +81,7 @@ export default function App() {
     setView("welcome");
   }, []);
 
-  function toggleVoiceLock(next) {
-    setVoiceLockEnabled(next);
-    localStorage.setItem("voiceLockEnabled", String(next));
-  }
-
   useInactivityLock(goToWelcome, INACTIVITY_LOCK_MS, view !== "welcome");
-
-  const { supported: voiceSupported } = useVoiceLock(
-    VOICE_LOCK_PHRASE,
-    goToWelcome,
-    voiceLockEnabled
-  );
 
   const lastEscapeRef = useRef(0);
   useEffect(() => {
@@ -101,15 +97,44 @@ export default function App() {
     return () => window.removeEventListener("keydown", handleGlobalEscape);
   }, [view, goToWelcome]);
 
+  function handleKnockMatch() {
+    tryUnlock(KNOCK_TARGET_WORD);
+  }
+
+  // Burn links bypass the entire vault system entirely - reachable by
+  // anyone with the link, no password required, on purpose.
+  if (burnId) {
+    return (
+      <div className="relative min-h-full">
+        <div className="aurora-bg" />
+        <div className="relative z-10 h-full">
+          <BurnView id={burnId} />
+        </div>
+      </div>
+    );
+  }
+
+  const signature =
+    view === "gallery" && activeVault ? vaultSignatureColors(activeVault.id) : null;
+
   return (
-    <div className="relative min-h-full">
+    <div
+      className="relative min-h-full"
+      style={
+        signature
+          ? { "--vault-color-a": signature.colorA, "--vault-color-b": signature.colorB }
+          : undefined
+      }
+    >
       <div className="aurora-bg" />
       <div className="relative z-10 h-full">
         {view === "welcome" && (
           <div
-            className="h-full flex items-center justify-center"
+            className="h-full flex items-center justify-center relative"
             onClick={() => inputRef.current?.focus()}
           >
+            <KnockOrbs onMatch={handleKnockMatch} />
+
             <h1 className="text-5xl font-light tracking-tight text-gray-500 select-none">
               Welcome<span className="cursor-blink text-indigo-400">_</span>
             </h1>
@@ -129,8 +154,8 @@ export default function App() {
               onBlur={handleBlur}
               className={
                 promptVisible
-                  ? "fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-72 text-center px-5 py-3 rounded-xl bg-white/[0.06] border border-white/15 text-white text-lg tracking-wide outline-none focus:ring-2 focus:ring-indigo-400 backdrop-blur-xl z-20 scale-in"
-                  : "fixed inset-0 opacity-0 z-20"
+                  ? "fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-72 text-center px-5 py-3 rounded-xl bg-white/[0.06] border border-white/15 text-white text-lg tracking-wide outline-none focus:ring-2 focus:ring-indigo-400 backdrop-blur-xl z-30 scale-in"
+                  : "fixed inset-0 opacity-0 z-10"
               }
               style={{ fontSize: "16px" }}
             />
@@ -139,12 +164,7 @@ export default function App() {
 
         {view === "settings" && (
           <div className="fade-up h-full">
-            <Settings
-              onBack={goToWelcome}
-              voiceLockEnabled={voiceLockEnabled}
-              onToggleVoiceLock={toggleVoiceLock}
-              voiceSupported={voiceSupported}
-            />
+            <Settings onBack={goToWelcome} />
           </div>
         )}
 

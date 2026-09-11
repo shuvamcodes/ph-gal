@@ -1,22 +1,44 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { createBurnLink } from "../burnLinks.js";
 
 const SLIDESHOW_INTERVAL_MS = 4000;
+const MIN_SCALE = 1;
+const MAX_SCALE = 4;
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function distanceBetween(a, b) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
 
 export default function PhotoModal({ photos, index, onClose, onDelete, onNavigate, onRename }) {
   const containerRef = useRef(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [zoomed, setZoomed] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
   const [slideshowOn, setSlideshowOn] = useState(false);
+  const [shareState, setShareState] = useState("idle");
+
+  const [scale, setScale] = useState(1);
+  const [position, setPosition] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+
+  const activePointersRef = useRef(new Map());
+  const pointerDownPosRef = useRef(null);
+  const lastPointerRef = useRef({ x: 0, y: 0 });
+  const pinchStartDistRef = useRef(null);
+  const pinchStartScaleRef = useRef(1);
 
   const photo = photos[index];
   const isVideo = photo?.type === "video";
 
   useEffect(() => {
-    setZoomed(false);
     setEditingName(false);
+    setScale(1);
+    setPosition({ x: 0, y: 0 });
   }, [index]);
 
   useEffect(() => {
@@ -54,6 +76,10 @@ export default function PhotoModal({ photos, index, onClose, onDelete, onNavigat
       } else if (e.key === " ") {
         e.preventDefault();
         setSlideshowOn((s) => !s);
+      } else if (e.key === "+" || e.key === "=") {
+        zoomIn();
+      } else if (e.key === "-") {
+        zoomOut();
       }
     }
 
@@ -87,6 +113,99 @@ export default function PhotoModal({ photos, index, onClose, onDelete, onNavigat
     }
   }
 
+  function zoomIn() {
+    setScale((s) => clamp(s + 0.5, MIN_SCALE, MAX_SCALE));
+  }
+
+  function zoomOut() {
+    setScale((s) => {
+      const next = clamp(s - 0.5, MIN_SCALE, MAX_SCALE);
+      if (next === 1) setPosition({ x: 0, y: 0 });
+      return next;
+    });
+  }
+
+  function resetZoom() {
+    setScale(1);
+    setPosition({ x: 0, y: 0 });
+  }
+
+  function handleWheel(e) {
+    if (isVideo) return;
+    e.preventDefault();
+    const delta = e.deltaY < 0 ? 0.2 : -0.2;
+    setScale((s) => {
+      const next = clamp(s + delta, MIN_SCALE, MAX_SCALE);
+      if (next === 1) setPosition({ x: 0, y: 0 });
+      return next;
+    });
+  }
+
+  function handlePointerDown(e) {
+    if (isVideo) return;
+    activePointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    e.currentTarget.setPointerCapture(e.pointerId);
+
+    if (activePointersRef.current.size === 1) {
+      pointerDownPosRef.current = { x: e.clientX, y: e.clientY };
+      lastPointerRef.current = { x: e.clientX, y: e.clientY };
+      if (scale > 1) setIsDragging(true);
+    } else if (activePointersRef.current.size === 2) {
+      const pts = Array.from(activePointersRef.current.values());
+      pinchStartDistRef.current = distanceBetween(pts[0], pts[1]);
+      pinchStartScaleRef.current = scale;
+      setIsDragging(false);
+    }
+  }
+
+  function handlePointerMove(e) {
+    if (isVideo || !activePointersRef.current.has(e.pointerId)) return;
+    activePointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (activePointersRef.current.size === 2) {
+      const pts = Array.from(activePointersRef.current.values());
+      const dist = distanceBetween(pts[0], pts[1]);
+      if (pinchStartDistRef.current) {
+        const factor = dist / pinchStartDistRef.current;
+        const next = clamp(pinchStartScaleRef.current * factor, MIN_SCALE, MAX_SCALE);
+        setScale(next);
+        if (next === 1) setPosition({ x: 0, y: 0 });
+      }
+    } else if (activePointersRef.current.size === 1 && isDragging) {
+      const dx = e.clientX - lastPointerRef.current.x;
+      const dy = e.clientY - lastPointerRef.current.y;
+      lastPointerRef.current = { x: e.clientX, y: e.clientY };
+      setPosition((p) => ({ x: p.x + dx, y: p.y + dy }));
+    }
+  }
+
+  function handlePointerUp(e) {
+    if (isVideo) return;
+    activePointersRef.current.delete(e.pointerId);
+
+    if (activePointersRef.current.size < 2) {
+      pinchStartDistRef.current = null;
+    }
+
+    if (activePointersRef.current.size === 0) {
+      setIsDragging(false);
+
+      if (pointerDownPosRef.current) {
+        const dx = Math.abs(e.clientX - pointerDownPosRef.current.x);
+        const dy = Math.abs(e.clientY - pointerDownPosRef.current.y);
+        if (dx < 6 && dy < 6) {
+          // Treated as a tap/click, not a drag
+          if (scale > 1) {
+            resetZoom();
+          } else {
+            setScale(2);
+          }
+        }
+      }
+      pointerDownPosRef.current = null;
+    }
+  }
+
   async function handleDownload() {
     const response = await fetch(photo.url);
     const blob = await response.blob();
@@ -98,6 +217,19 @@ export default function PhotoModal({ photos, index, onClose, onDelete, onNavigat
     link.click();
     link.remove();
     URL.revokeObjectURL(blobUrl);
+  }
+
+  async function handleShare() {
+    setShareState("creating");
+    try {
+      const id = await createBurnLink(photo);
+      const link = `${window.location.origin}${window.location.pathname}?burn=${id}`;
+      await navigator.clipboard.writeText(link);
+      setShareState("copied");
+      setTimeout(() => setShareState("idle"), 2500);
+    } catch {
+      setShareState("idle");
+    }
   }
 
   function startRename() {
@@ -130,7 +262,34 @@ export default function PhotoModal({ photos, index, onClose, onDelete, onNavigat
         <span className="text-sm text-gray-400">
           {index + 1} / {photos.length}
         </span>
+
         <div className="flex items-center gap-2">
+          {!isVideo && (
+            <div className="flex items-center gap-1 mr-2">
+              <button
+                onClick={zoomOut}
+                className="w-9 h-9 flex items-center justify-center rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-white text-sm transition"
+                title="Zoom out (-)"
+              >
+                −
+              </button>
+              <button
+                onClick={resetZoom}
+                className="px-2 h-9 flex items-center justify-center rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-white text-xs transition"
+                title="Reset zoom"
+              >
+                {Math.round(scale * 100)}%
+              </button>
+              <button
+                onClick={zoomIn}
+                className="w-9 h-9 flex items-center justify-center rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-white text-sm transition"
+                title="Zoom in (+)"
+              >
+                +
+              </button>
+            </div>
+          )}
+
           <button
             onClick={() => setSlideshowOn((s) => !s)}
             className="w-9 h-9 flex items-center justify-center rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-white text-sm transition"
@@ -192,16 +351,27 @@ export default function PhotoModal({ photos, index, onClose, onDelete, onNavigat
             className="rounded-2xl shadow-[0_0_60px_rgba(99,102,241,0.15)] max-h-[75vh] max-w-full"
           />
         ) : (
-          <img
-            src={photo.url}
-            alt={photo.name}
-            onClick={() => setZoomed(!zoomed)}
-            className={`rounded-2xl shadow-[0_0_60px_rgba(99,102,241,0.15)] transition-transform duration-300 cursor-zoom-in ${
-              zoomed
-                ? "max-w-none max-h-none scale-150 cursor-zoom-out"
-                : "max-h-[75vh] max-w-full object-contain"
-            }`}
-          />
+          <div
+            className="overflow-hidden max-h-[75vh] max-w-full flex items-center justify-center"
+            style={{ touchAction: "none" }}
+            onWheel={handleWheel}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerCancel={handlePointerUp}
+          >
+            <img
+              src={photo.url}
+              alt={photo.name}
+              draggable={false}
+              className="rounded-2xl shadow-[0_0_60px_rgba(99,102,241,0.15)] max-h-[75vh] max-w-full object-contain select-none"
+              style={{
+                transform: `translate(${position.x}px, ${position.y}px) scale(${scale})`,
+                transition: isDragging ? "none" : "transform 0.15s ease-out",
+                cursor: scale > 1 ? (isDragging ? "grabbing" : "grab") : "zoom-in"
+              }}
+            />
+          </div>
         )}
 
         <div className="flex items-center gap-2 mt-4">
@@ -236,6 +406,18 @@ export default function PhotoModal({ photos, index, onClose, onDelete, onNavigat
           >
             Download
           </button>
+          <button
+            onClick={handleShare}
+            disabled={shareState === "creating"}
+            className="px-4 py-2 rounded-xl bg-white/[0.06] hover:bg-white/[0.1] border border-white/10 text-white text-sm transition disabled:opacity-50"
+          >
+            {shareState === "creating"
+              ? "Creating link..."
+              : shareState === "copied"
+              ? "Link copied!"
+              : "Share (one-time)"}
+          </button>
+          
           <button
             onClick={() => onDelete(photo)}
             className="px-4 py-2 rounded-xl bg-red-500/80 hover:bg-red-500 text-white text-sm transition"

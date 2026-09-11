@@ -29,13 +29,13 @@ body {
   opacity: 0.28;
 }
 .aurora-bg::before {
-  background: radial-gradient(circle, #6366f1, transparent 70%);
+  background: radial-gradient(circle, var(--vault-color-a, #6366f1), transparent 70%);
   top: -15%;
   left: -10%;
   animation: drift1 28s ease-in-out infinite;
 }
 .aurora-bg::after {
-  background: radial-gradient(circle, #22d3ee, transparent 70%);
+  background: radial-gradient(circle, var(--vault-color-b, #22d3ee), transparent 70%);
   bottom: -20%;
   right: -10%;
   animation: drift2 34s ease-in-out infinite;

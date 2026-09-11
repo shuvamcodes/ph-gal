@@ -4,6 +4,7 @@ import {
   where,
   getDocs,
   addDoc,
+  updateDoc,
   deleteDoc,
   doc,
   onSnapshot,
@@ -11,15 +12,25 @@ import {
 } from "firebase/firestore";
 import { db } from "./firebase";
 
-export async function findVaultByPassword(password) {
-  const q = query(
-    collection(db, "vaults"),
-    where("password", "==", password)
-  );
-  const snap = await getDocs(q);
-  if (snap.empty) return null;
-  const d = snap.docs[0];
-  return { id: d.id, ...d.data() };
+// Checks a typed password against both real vault passwords and duress
+// passwords. Returns { vault, decoy } where decoy=true means it matched
+// a duress word, or null if nothing matched at all.
+export async function findUnlockTarget(password) {
+  const realQ = query(collection(db, "vaults"), where("password", "==", password));
+  const realSnap = await getDocs(realQ);
+  if (!realSnap.empty) {
+    const d = realSnap.docs[0];
+    return { vault: { id: d.id, ...d.data() }, decoy: false };
+  }
+
+  const duressQ = query(collection(db, "vaults"), where("duressPassword", "==", password));
+  const duressSnap = await getDocs(duressQ);
+  if (!duressSnap.empty) {
+    const d = duressSnap.docs[0];
+    return { vault: { id: d.id, ...d.data() }, decoy: true };
+  }
+
+  return null;
 }
 
 export function listenToVaults(callback) {
@@ -29,11 +40,18 @@ export function listenToVaults(callback) {
   });
 }
 
-export async function createVault(label, password) {
+export async function createVault(label, password, duressPassword) {
   await addDoc(collection(db, "vaults"), {
     label,
     password,
+    duressPassword: duressPassword || null,
     createdAt: serverTimestamp()
+  });
+}
+
+export async function setVaultDuressPassword(vaultId, duressPassword) {
+  await updateDoc(doc(db, "vaults", vaultId), {
+    duressPassword: duressPassword || null
   });
 }
 

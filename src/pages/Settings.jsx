@@ -1,11 +1,84 @@
 import { useEffect, useState } from "react";
-import { listenToVaults, createVault, deleteVault } from "../vaults.js";
+import {
+  listenToVaults,
+  createVault,
+  deleteVault,
+  setVaultDuressPassword
+} from "../vaults.js";
 import { ADMIN_WORD } from "../config.js";
 
-export default function Settings({ onBack, voiceLockEnabled, onToggleVoiceLock, voiceSupported }) {
+function DuressField({ vault, allUsedWords }) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(vault.duressPassword || "");
+  const [error, setError] = useState("");
+
+  async function handleSave(e) {
+    e.preventDefault();
+    setError("");
+    const trimmed = value.trim();
+
+    if (trimmed) {
+      if (trimmed === vault.password) {
+        setError("Duress word can't match this gallery's real password.");
+        return;
+      }
+      if (trimmed === ADMIN_WORD) {
+        setError("That word is reserved for Settings.");
+        return;
+      }
+      if (allUsedWords.includes(trimmed)) {
+        setError("That word is already used elsewhere.");
+        return;
+      }
+    }
+
+    await setVaultDuressPassword(vault.id, trimmed || null);
+    setEditing(false);
+  }
+
+  if (!editing) {
+    return (
+      <button
+        onClick={() => {
+          setValue(vault.duressPassword || "");
+          setEditing(true);
+        }}
+        className="text-xs text-gray-500 hover:text-indigo-300 transition"
+      >
+        {vault.duressPassword ? "Edit duress word" : "+ Add duress word"}
+      </button>
+    );
+  }
+
+  return (
+    <form onSubmit={handleSave} className="flex items-center gap-2 mt-1">
+      <input
+        autoFocus
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        placeholder="Duress word (leave blank to remove)"
+        className="text-xs bg-white/[0.06] border border-white/15 rounded-lg px-2 py-1 text-white outline-none focus:ring-2 focus:ring-indigo-400"
+      />
+      <button type="submit" className="text-xs text-indigo-300 hover:text-indigo-200">
+        Save
+      </button>
+      <button
+        type="button"
+        onClick={() => setEditing(false)}
+        className="text-xs text-gray-500 hover:text-white"
+      >
+        Cancel
+      </button>
+      {error && <span className="text-xs text-red-400">{error}</span>}
+    </form>
+  );
+}
+
+export default function Settings({ onBack }) {
   const [vaults, setVaults] = useState([]);
   const [label, setLabel] = useState("");
   const [password, setPassword] = useState("");
+  const [duressPassword, setDuressPassword] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -13,12 +86,17 @@ export default function Settings({ onBack, voiceLockEnabled, onToggleVoiceLock, 
     return unsub;
   }, []);
 
+  const allUsedWords = vaults.flatMap((v) =>
+    [v.password, v.duressPassword].filter(Boolean)
+  );
+
   async function handleCreate(e) {
     e.preventDefault();
     setError("");
 
     const trimmedLabel = label.trim();
     const trimmedPassword = password.trim();
+    const trimmedDuress = duressPassword.trim();
 
     if (!trimmedLabel || !trimmedPassword) return;
 
@@ -26,15 +104,29 @@ export default function Settings({ onBack, voiceLockEnabled, onToggleVoiceLock, 
       setError("That word is reserved for Settings — pick a different one.");
       return;
     }
-
-    if (vaults.some((v) => v.password === trimmedPassword)) {
+    if (allUsedWords.includes(trimmedPassword)) {
       setError("That password is already used by another gallery.");
       return;
     }
+    if (trimmedDuress) {
+      if (trimmedDuress === trimmedPassword) {
+        setError("Duress word can't match this gallery's own password.");
+        return;
+      }
+      if (trimmedDuress === ADMIN_WORD) {
+        setError("That word is reserved for Settings.");
+        return;
+      }
+      if (allUsedWords.includes(trimmedDuress)) {
+        setError("That duress word is already used elsewhere.");
+        return;
+      }
+    }
 
-    await createVault(trimmedLabel, trimmedPassword);
+    await createVault(trimmedLabel, trimmedPassword, trimmedDuress || null);
     setLabel("");
     setPassword("");
+    setDuressPassword("");
   }
 
   async function handleDelete(vault) {
@@ -55,36 +147,6 @@ export default function Settings({ onBack, voiceLockEnabled, onToggleVoiceLock, 
           Back
         </button>
       </header>
-
-      <div className="backdrop-blur-xl bg-white/[0.03] border border-white/10 rounded-2xl p-6 mb-8">
-        <h2 className="text-white text-sm font-medium mb-1">Voice panic lock</h2>
-        <p className="text-gray-500 text-xs mb-4">
-          When enabled, your microphone listens continuously (while this tab
-          is open) for a spoken trigger phrase and instantly locks back to
-          the Welcome screen from anywhere in the app.
-        </p>
-
-        {!voiceSupported && (
-          <p className="text-yellow-400 text-xs mb-3">
-            Your browser doesn't support voice recognition (this generally
-            only works in Chrome/Edge). Double-tapping Escape still works as
-            a fallback panic gesture.
-          </p>
-        )}
-
-        <label className="flex items-center gap-3 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={voiceLockEnabled}
-            onChange={(e) => onToggleVoiceLock(e.target.checked)}
-            disabled={!voiceSupported}
-            className="w-4 h-4 accent-indigo-500"
-          />
-          <span className="text-sm text-gray-200">
-            Enable voice panic lock
-          </span>
-        </label>
-      </div>
 
       <form
         onSubmit={handleCreate}
@@ -108,6 +170,12 @@ export default function Settings({ onBack, voiceLockEnabled, onToggleVoiceLock, 
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           placeholder="Secret word for this gallery"
+          className="w-full mb-3 px-4 py-2.5 rounded-xl bg-white/[0.05] border border-white/10 text-white placeholder-gray-500 outline-none focus:ring-2 focus:ring-indigo-400 transition"
+        />
+        <input
+          value={duressPassword}
+          onChange={(e) => setDuressPassword(e.target.value)}
+          placeholder="Duress word (optional) — opens an empty decoy instead"
           className="w-full mb-4 px-4 py-2.5 rounded-xl bg-white/[0.05] border border-white/10 text-white placeholder-gray-500 outline-none focus:ring-2 focus:ring-indigo-400 transition"
         />
         <button
@@ -130,20 +198,31 @@ export default function Settings({ onBack, voiceLockEnabled, onToggleVoiceLock, 
         {vaults.map((vault) => (
           <div
             key={vault.id}
-            className="flex items-center justify-between backdrop-blur-xl bg-white/[0.03] border border-white/10 rounded-xl px-4 py-3"
+            className="backdrop-blur-xl bg-white/[0.03] border border-white/10 rounded-xl px-4 py-3"
           >
-            <div>
-              <p className="text-white text-sm">{vault.label}</p>
-              <p className="text-gray-500 text-xs mt-0.5">
-                word: <span className="text-gray-400">{vault.password}</span>
-              </p>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-white text-sm">{vault.label}</p>
+                <p className="text-gray-500 text-xs mt-0.5">
+                  word: <span className="text-gray-400">{vault.password}</span>
+                </p>
+                {vault.duressPassword && (
+                  <p className="text-gray-500 text-xs mt-0.5">
+                    duress word: <span className="text-gray-400">{vault.duressPassword}</span>
+                  </p>
+                )}
+              </div>
+              <button
+                onClick={() => handleDelete(vault)}
+                className="text-gray-500 hover:text-red-400 text-sm transition"
+              >
+                Delete
+              </button>
             </div>
-            <button
-              onClick={() => handleDelete(vault)}
-              className="text-gray-500 hover:text-red-400 text-sm transition"
-            >
-              Delete
-            </button>
+
+            <div className="mt-2">
+              <DuressField vault={vault} allUsedWords={allUsedWords} />
+            </div>
           </div>
         ))}
       </div>
