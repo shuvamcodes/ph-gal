@@ -596,6 +596,7 @@ export default function Welcome({ onUnlock }) {
         );
     }
 
+    
     if (!bootDone) {
         return <BootScreen onDone={completeBoot} />;
     }
